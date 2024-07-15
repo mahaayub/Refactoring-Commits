@@ -139,7 +139,7 @@ public class Main {
     public static GitHub connectGithub() {
         GitHub github = null;
         try {
-            github = new GitHubBuilder().withOAuthToken("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", "mahaayub").build();
+            github = new GitHubBuilder().withOAuthToken("--", "--").build();
         } catch (IOException e) {
             e.printStackTrace();
         }
