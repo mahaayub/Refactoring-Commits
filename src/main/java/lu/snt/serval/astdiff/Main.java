@@ -24,45 +24,62 @@ public class Main {
     public static void main(String[] args) {
         GitHub github= connectGithub();
 
+        JSONArray jsonArray = new JSONArray();
+        JSONArray outputJsonArray = new JSONArray();
+        JSONArray errorJsonArray = new JSONArray();
         try {
             // Read JSON file as string
             String jsonStr = new String(Files.readAllBytes(Paths.get("src/test/resources/data.json")));
             // Parse JSON string to JSON array
-            JSONArray jsonArray = new JSONArray(jsonStr);
-            JSONArray outputJsonArray = new JSONArray();
+            jsonArray = new JSONArray(jsonStr);
+        } catch (IOException e) {
+            System.err.println("Error reading JSON file: " + e.getMessage());
+            JSONObject errorEntry = new JSONObject();
+            errorEntry.put("status", "error");
+            errorEntry.put("message", "Error reading JSON file: " + e.getMessage());
+            errorJsonArray.put(errorEntry);
+        }
 
-
-            // Iterate over each entry in the JSON array
-            for (int i = 0; i < 100; i++) {
+        // Iterate over each entry in the JSON array
+        for (int i =0; i < 1000; i++) {
+            JSONObject logEntry = new JSONObject();
+            try {
                 // Get the current entry
                 JSONObject entry = jsonArray.getJSONObject(i);
 
                 // Extract values of "repository" and "URL"
-                String repositoryurl = entry.getString("repository");
+                String repositoryUrl = entry.getString("repository");
                 String url = entry.getString("url");
 
                 // Print the extracted values
                 System.out.println("Entry " + (i + 1) + ":");
-                System.out.println("Repository: " + repositoryurl);
+                System.out.println("Repository: " + repositoryUrl);
                 System.out.println("URL: " + url);
                 System.out.println();
 
-                // Analyze commit and get changed java files
-                GHRepository repository = getGHRepository(repositoryurl,github);
-                GHCommit commit= getGHCommit(github,repository,url);
+                // Log the extracted values
+                logEntry.put("entryIndex", i + 1);
+                logEntry.put("repository", repositoryUrl);
+                logEntry.put("url", url);
+
+                // Analyze commit and get changed Java files
+                GHRepository repository = getGHRepository(repositoryUrl, github);
+                GHCommit commit = getGHCommit(github, repository, url);
                 if (commit == null) {
                     System.err.println("Commit not found for URL: " + url);
+                    logEntry.put("status", "error");
+                    logEntry.put("message", "Commit not found");
+                    errorJsonArray.put(logEntry);
                     continue;
                 }
                 List<String> javaFiles = getJavaFiles(commit);
-                List<String> mainFiles = filterMainFiles (javaFiles);
-                List<String> testFiles = filterTestFiles (javaFiles);
-                if (!testFiles.isEmpty()) {
-                    List<RefactoringDetails> allRefactorings = new ArrayList<>();
+                List<String> mainFiles = filterMainFiles(javaFiles);
+                List<String> testFiles = filterTestFiles(javaFiles);
 
+                if (!testFiles.isEmpty()) {
                     for (String filePath : mainFiles) {
                         JSONObject resultJson = new JSONObject();
-                        resultJson.put("repository", repositoryurl);
+                        resultJson.put("repository", repositoryUrl);
                         resultJson.put("commit", url);
                         resultJson.put("fileType", "main");
                         resultJson.put("filePath", filePath);
@@ -76,12 +93,11 @@ public class Main {
                         resultJson.put("refactorings", refactoringsArray);
 
                         outputJsonArray.put(resultJson);
-
                     }
 
                     for (String filePath : testFiles) {
                         JSONObject resultJson = new JSONObject();
-                        resultJson.put("repository", repositoryurl);
+                        resultJson.put("repository", repositoryUrl);
                         resultJson.put("commit", url);
                         resultJson.put("fileType", "test");
                         resultJson.put("filePath", filePath);
@@ -97,20 +113,33 @@ public class Main {
                         outputJsonArray.put(resultJson);
                     }
                 }
-            }
-            // Save the output JSON array to a file
-            Files.write(Paths.get("src/test/resources/output_refactorings.json"), outputJsonArray.toString(2).getBytes());
 
-        } catch (IOException e) {
-            System.err.println("Error reading JSON file: " + e.getMessage());
+                // Mark the log entry as successful
+                logEntry.put("status", "success");
+                errorJsonArray.put(logEntry);
+
+            } catch (Exception e) {
+                System.err.println("Error processing entry " + (i + 1) + ": " + e.getMessage());
+                e.printStackTrace();
+                logEntry.put("status", "error");
+                logEntry.put("message", e.getMessage());
+                errorJsonArray.put(logEntry);
+            }
         }
 
+        // Save the output JSON array to a file
+        try {
+            Files.write(Paths.get("src/test/resources/output_refactorings.json"), outputJsonArray.toString(2).getBytes());
+            Files.write(Paths.get("src/test/resources/error_log.json"), errorJsonArray.toString(2).getBytes());
+        } catch (IOException e) {
+            System.err.println("Error writing JSON file: " + e.getMessage());
+        }
     }
 
     public static GitHub connectGithub() {
         GitHub github = null;
         try {
-            github = new GitHubBuilder().withOAuthToken("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", "mahaayub").build();
+            github = new GitHubBuilder().withOAuthToken("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", "mahaayub").build();
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -219,6 +248,7 @@ public class Main {
 
                 // Get refactoring data as JSON string and store it
                 List<Refactoring> refactorings = diff.getRefactorings();
+               // System.out.println("Json Refactorings:"+ refactorings.getLast().toJSON());
 
                 if (refactorings.isEmpty()) {
                     System.out.println("No refactorings found in : " + fileName);
@@ -230,9 +260,23 @@ public class Main {
                         JsonNode refactoringJson = objectMapper.readTree(refactoring.toJSON());
                         String type = refactoringJson.get("type").asText();
                         String description = refactoringJson.get("description").asText();
+
+                        int rightSideLineNumber = -1;
+
+                        // Extract the right side location line number
+                        JsonNode rightSideLocations = refactoringJson.get("rightSideLocations");
+                        if (rightSideLocations != null && rightSideLocations.isArray()) {
+                            for (JsonNode location : rightSideLocations) {
+                                rightSideLineNumber = location.get("startLine").asInt();
+                            }
+                        }
+
                         System.out.println(type + " " + description);
+
                         details.setType(type);
                         details.setDescription(description);
+                        details.setRightSideLineNumber(rightSideLineNumber);
+
                         return details;
                     } catch (IOException e) {
                         e.printStackTrace();
